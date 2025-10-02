@@ -1,6 +1,6 @@
 Flask
-Flask-Cors
 google-generativeai
 yt-dlp
 youtube-transcript-api
 Flask-Cors
+gunicorn
