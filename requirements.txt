@@ -6,3 +6,4 @@ youtube-transcript-api
 gunicorn
 google-cloud-storage
 google-cloud-secret-manager
+google-auth
