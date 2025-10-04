@@ -1,5 +1,9 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) vFINAL - Versión de Victoria
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v5.0 - Versión Corregida
+# -----------------------------------------------------------------------------
+# Esta versión implementa la carga de credenciales "just-in-time" para ser
+# compatible con el ciclo de vida de Cloud Run. Las credenciales solo se
+# cargan cuando llega la primera petición, no durante el arranque.
 # -----------------------------------------------------------------------------
 import flask, google.generativeai as genai, yt_dlp, os, sys, datetime, json
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -13,38 +17,59 @@ from flask_cors import CORS
 app = flask.Flask(__name__)
 CORS(app) # La configuración más simple y robusta
 
-# --- BLOQUE DE ARRANQUE Y CARGA DE CREDENCIALES ---
-print("✅ INICIANDO ARRANQUE vFINAL...", file=sys.stderr)
+print("✅ INICIANDO ARRANQUE v5.0 (Listo para recibir peticiones)...", file=sys.stderr)
+sys.stderr.flush()
+
+# --- CONFIGURACIÓN GLOBAL Y CACHE PARA CREDENCIALES ---
+# Estas variables se definen una vez, pero se llenan solo cuando son necesarias.
 PROJECT_ID = os.environ.get('GCP_PROJECT')
 GCS_BUCKET_NAME = 'forteza11-audio-uploads'
+
 storage_credentials = None
 gemini_key_loaded = False
 
-try:
-    client = SecretManagerServiceClient()
-    print("⚙️ Cargando GEMINI_API_KEY...", file=sys.stderr)
-    name = f"projects/{PROJECT_ID}/secrets/GEMINI_API_KEY/versions/latest"
-    response = client.access_secret_version(name=name)
-    gemini_key = response.payload.data.decode("UTF-8")
-    genai.configure(api_key=gemini_key)
-    gemini_key_loaded = True
-    print("✅ Credenciales de Gemini cargadas.", file=sys.stderr)
-
-    print("⚙️ Cargando gcs-service-account-key...", file=sys.stderr)
-    name = f"projects/{PROJECT_ID}/secrets/gcs-service-account-key/versions/latest"
-    response = client.access_secret_version(name=name)
-    key_json = json.loads(response.payload.data.decode("UTF-8"))
-    storage_credentials = service_account.Credentials.from_service_account_info(key_json)
-    print("✅ Credenciales de Storage (notario) cargadas.", file=sys.stderr)
+# --- FUNCIÓN DE CARGA DE CREDENCIALES "JUST-IN-TIME" ---
+# Esta es la función clave. Solo se ejecuta UNA VEZ cuando llega la primera
+# petición a cualquiera de los endpoints.
+def load_credentials_if_needed():
+    global storage_credentials, gemini_key_loaded
     
-    print("🎉 ARRANQUE COMPLETADO CON ÉXITO.", file=sys.stderr)
-except Exception as e:
-    print(f"❌ ERROR CRÍTICO DURANTE EL ARRANQUE: {e}", file=sys.stderr)
-    import traceback
-    traceback.print_exc(file=sys.stderr)
-sys.stderr.flush()
+    # Si ya las cargamos antes, no hacemos nada más. Esto es nuestro "cache".
+    if storage_credentials and gemini_key_loaded:
+        return True
+    
+    print("⚙️ Detectada primera petición. Cargando credenciales (just-in-time)...", file=sys.stderr)
+    try:
+        client = SecretManagerServiceClient()
+        
+        # Cargar Gemini Key
+        if not gemini_key_loaded:
+            print("  -> Cargando GEMINI_API_KEY...", file=sys.stderr)
+            name = f"projects/{PROJECT_ID}/secrets/GEMINI_API_KEY/versions/latest"
+            response = client.access_secret_version(name=name)
+            gemini_key = response.payload.data.decode("UTF-8")
+            genai.configure(api_key=gemini_key)
+            gemini_key_loaded = True
+            print("  ✅ Credenciales de Gemini cargadas.")
 
-# --- PROMPTS Y FUNCIONES AUXILIARES ---
+        # Cargar GCS Key (el "notario")
+        if not storage_credentials:
+            print("  -> Cargando gcs-service-account-key...", file=sys.stderr)
+            name = f"projects/{PROJECT_ID}/secrets/gcs-service-account-key/versions/latest"
+            response = client.access_secret_version(name=name)
+            key_json = json.loads(response.payload.data.decode("UTF-8"))
+            storage_credentials = service_account.Credentials.from_service_account_info(key_json)
+            print("  ✅ Credenciales de Storage cargadas.")
+        
+        print("🎉 Credenciales listas.", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO AL CARGAR CREDENCIALES: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return False
+
+# --- PROMPTS Y FUNCIONES AUXILIARES (Sin Cambios) ---
 PROMPT_PARA_AUDIO = """
 Actúa como un experto estratega de marketing de contenidos de Forteza11. Tu primera tarea es transcribir el audio proporcionado con máxima precisión. Una vez transcrito, analiza el texto y transfórmalo en las siguientes piezas de contenido:
 1.  **Transcripción Completa:** El texto completo del audio.
@@ -109,10 +134,12 @@ def generar_contenido_ia(prompt, media=None):
 # --- ENDPOINTS DE LA API ---
 @app.route('/generate_upload_url', methods=['POST'])
 def generate_upload_url():
-    if not storage_credentials: return flask.jsonify({"error": "Las credenciales del servidor no están configuradas correctamente."}), 500
+    if not load_credentials_if_needed(): return flask.jsonify({"error": "Las credenciales del servidor no se pudieron cargar."}), 500
+    
     data = flask.request.json
     filename = data.get('filename')
     if not filename: return flask.jsonify({"error": "Falta el nombre del archivo."}), 400
+    
     storage_client = storage.Client(credentials=storage_credentials)
     bucket = storage_client.bucket(GCS_BUCKET_NAME)
     blob = bucket.blob(secure_filename(filename))
@@ -121,10 +148,13 @@ def generate_upload_url():
 
 @app.route('/process_audio', methods=['POST'])
 def handle_audio_generation():
+    if not load_credentials_if_needed(): return flask.jsonify({"error": "Las credenciales del servidor no se pudieron cargar."}), 500
+    
     data = flask.request.json
     gcs_filename = data.get('gcs_filename')
     if not gcs_filename: return flask.jsonify({"error": "Falta el nombre del archivo en GCS."}), 400
-    storage_client = storage.Client()
+    
+    storage_client = storage.Client(credentials=storage_credentials) # CORRECCIÓN: Usar credenciales cargadas
     bucket = storage_client.bucket(GCS_BUCKET_NAME)
     blob = bucket.blob(gcs_filename)
     filepath = os.path.join('/tmp', gcs_filename)
@@ -138,23 +168,34 @@ def handle_audio_generation():
 
 @app.route('/process_video', methods=['POST'])
 def handle_video_generation():
+    if not load_credentials_if_needed(): return flask.jsonify({"error": "Las credenciales del servidor no se pudieron cargar."}), 500
+
     data = flask.request.json
     youtube_url = data.get('video_url')
     if not youtube_url: return flask.jsonify({"error": "Falta la URL del video."}), 400
     video_id = obtener_id_video(youtube_url)
     if not video_id: return flask.jsonify({"error": "La URL del video no es válida."}), 400
+    
     contenido_generado = None
     ruta_audio = descargar_audio_youtube(youtube_url)
     if ruta_audio:
-        try: contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=ruta_audio)
-        except Exception: contenido_generado = None
+        try: 
+            contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=ruta_audio)
+        except Exception as e:
+            print(f"Fallo al procesar audio, intentando con transcripción API. Error: {e}", file=sys.stderr)
+            contenido_generado = None
+            
     if not contenido_generado:
         texto_transcripcion = obtener_transcripcion_api(video_id)
         if texto_transcripcion:
-            contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
+            try:
+                contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
+            except Exception as e:
+                print(f"Fallo al procesar con transcripción API. Error: {e}", file=sys.stderr)
+                contenido_generado = None
+
     if contenido_generado: return flask.jsonify({"contenido_generado": contenido_generado})
-    else: return flask.jsonify({"error": "Fallo Crítico: No se pudo procesar el video."}), 500
+    else: return flask.jsonify({"error": "Fallo Crítico: No se pudo procesar el video por ninguna vía."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
-
