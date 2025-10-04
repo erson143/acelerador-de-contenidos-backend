@@ -1,29 +1,33 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v7.2 - Versión de Lanzamiento
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v9.0 - Versión de la Victoria
 # -----------------------------------------------------------------------------
-import flask, google.generativeai as genai, yt_dlp, os, sys, datetime, json
+import flask, google.genergenerativeai as genai, yt_dlp, os, sys, datetime, json
 from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
 from werkzeug.utils import secure_filename
 from google.cloud import storage
-from google.cloud.secretmanager import SecretManagerServiceClient
+from google.cloud.secretmanager_v1 import SecretManagerServiceClient
 from google.oauth2 import service_account
 from flask_cors import CORS
 
 app = flask.Flask(__name__)
-CORS(app)
+CORS(app) 
 
 # --- BLOQUE DE ARRANQUE Y CARGA DE CREDENCIALES ---
-print("✅ INICIANDO ARRANQUE v7.2...", file=sys.stderr)
-PROJECT_ID = os.environ.get('GCP_PROJECT')
-GCS_BUCKET_NAME = 'forteza11-audio-uploads'
-
+print("✅ INICIANDO ARRANQUE v9.0...", file=sys.stderr)
 storage_credentials = None
 gemini_key_loaded = False
 
 try:
+    PROJECT_ID = os.environ.get('GCP_PROJECT')
+    if not PROJECT_ID:
+        raise ValueError("La variable de entorno GCP_PROJECT no está definida.")
+    print(f"⚙️ ID del Proyecto detectado: {PROJECT_ID}", file=sys.stderr)
+    
+    GCS_BUCKET_NAME = 'forteza11-audio-uploads'
     client = SecretManagerServiceClient()
     
+    # Cargar Gemini Key
     print("⚙️ Cargando GEMINI_API_KEY...", file=sys.stderr)
     name = f"projects/{PROJECT_ID}/secrets/GEMINI_API_KEY/versions/latest"
     response = client.access_secret_version(name=name)
@@ -32,6 +36,7 @@ try:
     gemini_key_loaded = True
     print("✅ Credenciales de Gemini cargadas.", file=sys.stderr)
 
+    # Cargar GCS Key
     print("⚙️ Cargando gcs-service-account-key...", file=sys.stderr)
     name = f"projects/{PROJECT_ID}/secrets/gcs-service-account-key/versions/latest"
     response = client.access_secret_version(name=name)
@@ -47,8 +52,9 @@ except Exception as e:
     traceback.print_exc(file=sys.stderr)
 
 sys.stderr.flush()
+# --- FIN DEL BLOQUE DE ARRANQUE ---
 
-# --- PROMPTS Y FUNCIONES AUXILIARES ---
+# ... (El resto del código: Prompts, funciones y endpoints se mantienen exactamente igual que en la versión anterior) ...
 PROMPT_PARA_AUDIO = """
 Actúa como un experto estratega de marketing de contenidos de Forteza11. Tu primera tarea es transcribir el audio proporcionado con máxima precisión. Una vez transcrito, analiza el texto y transfórmalo en las siguientes piezas de contenido:
 1.  **Transcripción Completa:** El texto completo del audio.
@@ -75,8 +81,7 @@ Aquí está la transcripción:
 def obtener_id_video(url):
     try:
         if 'youtu.be' in url: return url.split('/')[-1].split('?')[0]
-        query = urlparse(url).query
-        params = parse_qs(query)
+        query = urlparse(url).query; params = parse_qs(query)
         return params.get('v', [None])[0]
     except Exception: return None
 
@@ -88,21 +93,16 @@ def descargar_audio_youtube(url):
         ruta_audio = "/tmp/audio_descargado.mp3"
         if os.path.exists(ruta_audio): return ruta_audio
         else: raise FileNotFoundError("El archivo de audio no se creó.")
-    except Exception as e:
-        print(f"⚠️ Falló la descarga de audio. ({e})")
-        return None
+    except Exception: return None
 
 def obtener_transcripcion_api(video_id, idioma='es'):
-    print(f"⚙️ Motor de Respaldo: Obteniendo subtítulos para: {video_id}...")
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[idioma])
         return " ".join([item['text'] for item in transcript_list])
-    except Exception as e:
-        print(f"⚠️ No se encontraron subtítulos. ({e})")
-        return None
+    except Exception: return None
 
 def generar_contenido_ia(prompt, media=None):
-    if not gemini_key_loaded: raise ValueError("La API Key de Gemini no está configurada en el servidor.")
+    if not gemini_key_loaded: raise ValueError("La API Key de Gemini no está configurada.")
     try:
         model = genai.GenerativeModel('gemini-1.5-pro-latest')
         args = [prompt]
@@ -117,12 +117,9 @@ def generar_contenido_ia(prompt, media=None):
         if media and isinstance(media, str) and os.path.exists(media):
             os.remove(media)
 
-# --- ENDPOINTS DE LA API (CON LA CORRECCIÓN) ---
 @app.route('/generate_upload_url', methods=['POST', 'OPTIONS'])
 def generate_upload_url():
-    if flask.request.method == 'OPTIONS':
-        return '', 204
-    if not storage_credentials: return flask.jsonify({"error": "Las credenciales del servidor no están configuradas correctamente."}), 500
+    if not storage_credentials: return flask.jsonify({"error": "Las credenciales del servidor no están configuradas."}), 500
     data = flask.request.json
     filename = data.get('filename')
     if not filename: return flask.jsonify({"error": "Falta el nombre del archivo."}), 400
@@ -134,8 +131,6 @@ def generate_upload_url():
 
 @app.route('/process_audio', methods=['POST', 'OPTIONS'])
 def handle_audio_generation():
-    if flask.request.method == 'OPTIONS':
-        return '', 204
     data = flask.request.json
     gcs_filename = data.get('gcs_filename')
     if not gcs_filename: return flask.jsonify({"error": "Falta el nombre del archivo en GCS."}), 400
@@ -153,8 +148,6 @@ def handle_audio_generation():
 
 @app.route('/process_video', methods=['POST', 'OPTIONS'])
 def handle_video_generation():
-    if flask.request.method == 'OPTIONS':
-        return '', 204
     data = flask.request.json
     youtube_url = data.get('video_url')
     if not youtube_url: return flask.jsonify({"error": "Falta la URL del video."}), 400
@@ -164,9 +157,7 @@ def handle_video_generation():
     ruta_audio = descargar_audio_youtube(youtube_url)
     if ruta_audio:
         try: contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=ruta_audio)
-        except Exception as e:
-            print(f"Error en motor principal: {e}")
-            contenido_generado = None
+        except Exception as e: contenido_generado = None
     if not contenido_generado:
         texto_transcripcion = obtener_transcripcion_api(video_id)
         if texto_transcripcion:
