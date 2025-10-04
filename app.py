@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) vFINAL - Lanzamiento
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) vFINAL - Versión de Victoria
 # -----------------------------------------------------------------------------
 import flask, google.generativeai as genai, yt_dlp, os, sys, datetime, json
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -11,11 +11,7 @@ from google.oauth2 import service_account
 from flask_cors import CORS
 
 app = flask.Flask(__name__)
-
-# Configuración de CORS final y robusta
-CORS(app, resources={
-  r"/*": {"origins": "https://ia.forteza11.com"}
-})
+CORS(app) # La configuración más simple y robusta
 
 # --- BLOQUE DE ARRANQUE Y CARGA DE CREDENCIALES ---
 print("✅ INICIANDO ARRANQUE vFINAL...", file=sys.stderr)
@@ -26,7 +22,6 @@ gemini_key_loaded = False
 
 try:
     client = SecretManagerServiceClient()
-    # Cargar Gemini Key
     print("⚙️ Cargando GEMINI_API_KEY...", file=sys.stderr)
     name = f"projects/{PROJECT_ID}/secrets/GEMINI_API_KEY/versions/latest"
     response = client.access_secret_version(name=name)
@@ -35,7 +30,6 @@ try:
     gemini_key_loaded = True
     print("✅ Credenciales de Gemini cargadas.", file=sys.stderr)
 
-    # Cargar GCS Key
     print("⚙️ Cargando gcs-service-account-key...", file=sys.stderr)
     name = f"projects/{PROJECT_ID}/secrets/gcs-service-account-key/versions/latest"
     response = client.access_secret_version(name=name)
@@ -50,7 +44,7 @@ except Exception as e:
     traceback.print_exc(file=sys.stderr)
 sys.stderr.flush()
 
-# --- PROMPTS Y FUNCIONES AUXILIARES (Sin cambios) ---
+# --- PROMPTS Y FUNCIONES AUXILIARES ---
 PROMPT_PARA_AUDIO = """
 Actúa como un experto estratega de marketing de contenidos de Forteza11. Tu primera tarea es transcribir el audio proporcionado con máxima precisión. Una vez transcrito, analiza el texto y transfórmalo en las siguientes piezas de contenido:
 1.  **Transcripción Completa:** El texto completo del audio.
@@ -80,6 +74,7 @@ def obtener_id_video(url):
         query = urlparse(url).query; params = parse_qs(query)
         return params.get('v', [None])[0]
     except Exception: return None
+
 def descargar_audio_youtube(url):
     try:
         opciones = {'format': 'bestaudio/best', 'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}], 'outtmpl': '/tmp/audio_descargado.%(ext)s', 'quiet': True, 'ignoreerrors': True, 'no_warnings': True}
@@ -88,32 +83,33 @@ def descargar_audio_youtube(url):
         if os.path.exists(ruta_audio): return ruta_audio
         else: raise FileNotFoundError("El archivo de audio no se creó.")
     except Exception: return None
+
 def obtener_transcripcion_api(video_id, idioma='es'):
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[idioma])
         return " ".join([item['text'] for item in transcript_list])
     except Exception: return None
+
 def generar_contenido_ia(prompt, media=None):
     if not gemini_key_loaded: raise ValueError("La API Key de Gemini no está configurada en el servidor.")
     try:
         model = genai.GenerativeModel('gemini-1.5-pro-latest')
         args = [prompt]
-        if media:
-            if isinstance(media, str) and os.path.exists(media):
-                audio_file = genai.upload_file(path=media)
-                args.append(audio_file)
-            else: args[0] = prompt.format(transcript_text=media)
+        if media and isinstance(media, str) and os.path.exists(media):
+            audio_file = genai.upload_file(path=media)
+            args.append(audio_file)
+        elif media: 
+            args[0] = prompt.format(transcript_text=media)
         response = model.generate_content(args)
         return response.text
     finally:
         if media and isinstance(media, str) and os.path.exists(media):
             os.remove(media)
 
-# --- ENDPOINTS DE LA API (CORREGIDOS PARA MANEJAR OPTIONS) ---
-@app.route('/generate_upload_url', methods=['POST', 'OPTIONS'])
+# --- ENDPOINTS DE LA API ---
+@app.route('/generate_upload_url', methods=['POST'])
 def generate_upload_url():
-    if flask.request.method == 'OPTIONS': return '', 204
-    if not storage_credentials: return flask.jsonify({"error": "Las credenciales del servidor no están configuradas."}), 500
+    if not storage_credentials: return flask.jsonify({"error": "Las credenciales del servidor no están configuradas correctamente."}), 500
     data = flask.request.json
     filename = data.get('filename')
     if not filename: return flask.jsonify({"error": "Falta el nombre del archivo."}), 400
@@ -123,9 +119,8 @@ def generate_upload_url():
     url = blob.generate_signed_url(version="v4", expiration=datetime.timedelta(minutes=15), method="PUT", content_type=flask.request.json.get('contentType', 'application/octet-stream'))
     return flask.jsonify({"signed_url": url, "gcs_filename": blob.name})
 
-@app.route('/process_audio', methods=['POST', 'OPTIONS'])
+@app.route('/process_audio', methods=['POST'])
 def handle_audio_generation():
-    if flask.request.method == 'OPTIONS': return '', 204
     data = flask.request.json
     gcs_filename = data.get('gcs_filename')
     if not gcs_filename: return flask.jsonify({"error": "Falta el nombre del archivo en GCS."}), 400
@@ -141,9 +136,8 @@ def handle_audio_generation():
         else: return flask.jsonify({"error": "La IA no pudo generar contenido."}), 500
     except Exception as e: return flask.jsonify({"error": f"Error al procesar con IA: {e}"}), 500
 
-@app.route('/process_video', methods=['POST', 'OPTIONS'])
+@app.route('/process_video', methods=['POST'])
 def handle_video_generation():
-    if flask.request.method == 'OPTIONS': return '', 204
     data = flask.request.json
     youtube_url = data.get('video_url')
     if not youtube_url: return flask.jsonify({"error": "Falta la URL del video."}), 400
@@ -153,14 +147,11 @@ def handle_video_generation():
     ruta_audio = descargar_audio_youtube(youtube_url)
     if ruta_audio:
         try: contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=ruta_audio)
-        except Exception as e:
-            print(f"Error en motor principal: {e}")
-            contenido_generado = None
+        except Exception: contenido_generado = None
     if not contenido_generado:
         texto_transcripcion = obtener_transcripcion_api(video_id)
         if texto_transcripcion:
-            try: contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
-            except Exception as e: return flask.jsonify({"error": f"Error en motor de respaldo: {e}"}), 500
+            contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
     if contenido_generado: return flask.jsonify({"contenido_generado": contenido_generado})
     else: return flask.jsonify({"error": "Fallo Crítico: No se pudo procesar el video."}), 500
 
