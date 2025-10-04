@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v3.3 - Solución Final CORS
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v4.0 - Versión de Diagnóstico
 # -----------------------------------------------------------------------------
 
 from flask import Flask, request, jsonify
@@ -14,12 +14,21 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
-# CONFIGURACIÓN DE CORS REFORZADA:
-# Esta configuración es la correcta. La librería manejará las peticiones OPTIONS automáticamente.
-CORS(app, resources={
-  r"/process_video": {"origins": "https://ia.forteza11.com"},
-  r"/process_audio": {"origins": "https://ia.forteza11.com"}
-})
+# --- CAMBIO 1: CONFIGURACIÓN DE CORS DE "FUERZA BRUTA" PARA DIAGNÓSTICO ---
+# Le decimos al backend que acepte peticiones de CUALQUIER origen.
+CORS(app, origins="*")
+
+# --- CAMBIO 2: EL "ESPÍA" QUE REGISTRA TODAS LAS PETICIONES ENTRANTES ---
+@app.before_request
+def log_request_info():
+    print('--- INCOMING REQUEST ---', file=sys.stderr)
+    print(f"Method: {request.method}", file=sys.stderr)
+    print(f"Path: {request.path}", file=sys.stderr)
+    print(f"Origin Header: {request.headers.get('Origin')}", file=sys.stderr)
+    print('------------------------', file=sys.stderr)
+    sys.stderr.flush()
+
+# --- El resto del código se mantiene exactamente igual ---
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
@@ -106,10 +115,9 @@ def generar_contenido_ia(prompt, media=None):
             os.remove(media)
             print(f"🗑️ Archivo temporal '{media}' eliminado.")
 
-# --- ENDPOINTS DE LA API ---
 @app.route('/process_video', methods=['POST', 'OPTIONS'])
 def handle_video_generation():
-    # La línea 'if request.method == 'OPTIONS'' ha sido ELIMINADA. Flask-CORS lo maneja.
+    if request.method == 'OPTIONS': return '', 204
     data = request.json
     youtube_url = data.get('video_url')
     if not youtube_url: return jsonify({"error": "Falta la URL del video."}), 400
@@ -133,7 +141,7 @@ def handle_video_generation():
 
 @app.route('/process_audio', methods=['POST', 'OPTIONS'])
 def handle_audio_generation():
-    # La línea 'if request.method == 'OPTIONS'' ha sido ELIMINADA. Flask-CORS lo maneja.
+    if request.method == 'OPTIONS': return '', 204
     if 'audio_file' not in request.files: return jsonify({"error": "No se encontró el archivo de audio en la solicitud."}), 400
     file = request.files['audio_file']
     if file.filename == '': return jsonify({"error": "No se seleccionó ningún archivo."}), 400
