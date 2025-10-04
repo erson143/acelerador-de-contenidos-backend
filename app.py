@@ -1,6 +1,5 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v3.0
-# Versión final con soporte para YouTube Y carga de archivos de audio.
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v3.1 - CORS Reforzado
 # -----------------------------------------------------------------------------
 
 from flask import Flask, request, jsonify
@@ -15,17 +14,22 @@ from werkzeug.utils import secure_filename
 
 # --- CONFIGURACIÓN DE LA APLICACIÓN FLASK ---
 app = Flask(__name__)
-CORS(app) 
+
+# CONFIGURACIÓN DE CORS REFORZADA:
+# Le decimos explícitamente que acepte peticiones desde tu dominio.
+CORS(app, resources={
+  r"/process_video": {"origins": "https://ia.forteza11.com"},
+  r"/process_audio": {"origins": "https://ia.forteza11.com"}
+})
 
 # --- CONFIGURACIÓN DE LA API KEY (SEGURA) ---
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
     print("ERROR CRÍTICO: La variable de entorno GEMINI_API_KEY no fue encontrada.", file=sys.stderr)
 
-# --- PROMPTS MAESTROS ---
+# --- PROMPTS MAESTROS (Sin cambios) ---
 PROMPT_PARA_AUDIO = """
 Actúa como un experto estratega de marketing de contenidos de Forteza11. Tu primera tarea es transcribir el audio proporcionado con máxima precisión. Una vez transcrito, analiza el texto y transfórmalo en las siguientes piezas de contenido:
-
 1.  **Transcripción Completa:** El texto completo del audio.
 2.  **Resumen Ejecutivo (50-100 palabras):** Un resumen potente de la esencia del video.
 3.  **Puntos Clave | Insights Estratégicos (Lista):** 5-7 ideas o "insights" accionables del video.
@@ -34,17 +38,14 @@ Actúa como un experto estratega de marketing de contenidos de Forteza11. Tu pri
 6.  **Hilo para Twitter/X (3-5 tweets):** Un hilo para generar conversación.
 7.  **Sugerencias de Títulos Optimizados:** 5 títulos alternativos para el video.
 """
-
 PROMPT_PARA_TEXTO = """
 Actúa como un experto estratega de marketing de contenidos de Forteza11. Analiza la siguiente transcripción de un video de YouTube y transfórmala en estas piezas de contenido:
-
 1.  **Resumen Ejecutivo (50-100 palabras):** Un resumen potente de la esencia del video.
 2.  **Puntos Clave | Insights Estratégicos (Lista):** 5-7 ideas o "insights" accionables del video.
 3.  **Publicación para Blog/Artículo (300-400 palabras):** Un borrador para blog expandiendo las ideas principales.
 4.  **Guion para Short/Reel/TikTok:** Un guion breve y dinámico para video vertical.
 5.  **Hilo para Twitter/X (3-5 tweets):** Un hilo para generar conversación.
 6.  **Sugerencias de Títulos Optimizados:** 5 títulos alternativos para el video.
-
 Aquí está la transcripción:
 ---
 {transcript_text}
@@ -116,19 +117,16 @@ def generar_contenido_ia(prompt, media=None):
             os.remove(media)
             print(f"🗑️ Archivo temporal '{media}' eliminado.")
 
-# --- ENDPOINTS DE LA API ---
-
+# --- ENDPOINTS DE LA API (Sin cambios en la lógica interna) ---
 @app.route('/process_video', methods=['POST'])
 def handle_video_generation():
     data = request.json
     youtube_url = data.get('video_url')
     if not youtube_url:
         return jsonify({"error": "Falta la URL del video."}), 400
-
     video_id = obtener_id_video(youtube_url)
     if not video_id:
         return jsonify({"error": "La URL del video no es válida."}), 400
-
     contenido_generado = None
     ruta_audio = descargar_audio_youtube(youtube_url)
     if ruta_audio:
@@ -137,7 +135,6 @@ def handle_video_generation():
         except Exception as e:
             print(f"Error en el motor principal con Gemini: {e}")
             contenido_generado = None
-
     if not contenido_generado:
         print("\n🔄 Conmutando al motor de respaldo...")
         texto_transcripcion = obtener_transcripcion_api(video_id)
@@ -146,31 +143,24 @@ def handle_video_generation():
                 contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
             except Exception as e:
                 return jsonify({"error": f"Error contactando a Gemini con el motor de respaldo: {e}"}), 500
-
     if contenido_generado:
         return jsonify({"contenido_generado": contenido_generado})
     else:
         return jsonify({"error": "Fallo Crítico: No se pudo procesar el video. Puede que sea privado, no tenga audio o subtítulos disponibles."}), 500
 
-# --- ¡NUEVO ENDPOINT PARA MANEJAR ARCHIVOS DE AUDIO! ---
 @app.route('/process_audio', methods=['POST'])
 def handle_audio_generation():
     if 'audio_file' not in request.files:
-        return jsonify({"error": "No se encontró el archivo de audio."}), 400
-    
+        return jsonify({"error": "No se encontró el archivo de audio en la solicitud."}), 400
     file = request.files['audio_file']
     if file.filename == '':
         return jsonify({"error": "No se seleccionó ningún archivo."}), 400
-
     if file:
         filename = secure_filename(file.filename)
-        # Guardamos el archivo temporalmente en el servidor para procesarlo
         filepath = os.path.join('/tmp', filename)
         file.save(filepath)
         print(f"⚙️ Archivo de audio '{filename}' recibido y guardado temporalmente.")
-
         try:
-            # Usamos la misma función de IA que ya teníamos
             contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=filepath)
             if contenido_generado:
                 return jsonify({"contenido_generado": contenido_generado})
@@ -179,6 +169,6 @@ def handle_audio_generation():
         except Exception as e:
             return jsonify({"error": f"Ocurrió un error al procesar el archivo con la IA: {e}"}), 500
 
-# --- FUNCIÓN DE INICIO ---
+# --- FUNCIÓN DE INICIO (Sin cambios) ---
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
