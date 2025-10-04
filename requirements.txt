@@ -4,3 +4,4 @@ yt-dlp
 youtube-transcript-api
 Flask-Cors
 gunicorn
+google-cloud-storage
