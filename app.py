@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v7.2 - Solución Final 415
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v7.2 - Versión de Lanzamiento
 # -----------------------------------------------------------------------------
 import flask, google.generativeai as genai, yt_dlp, os, sys, datetime, json
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -11,8 +11,6 @@ from google.oauth2 import service_account
 from flask_cors import CORS
 
 app = flask.Flask(__name__)
-
-# --- CONFIGURACIÓN DE CORS (CORREGIDA Y SIMPLIFICADA) ---
 CORS(app)
 
 # --- BLOQUE DE ARRANQUE Y CARGA DE CREDENCIALES ---
@@ -81,6 +79,7 @@ def obtener_id_video(url):
         params = parse_qs(query)
         return params.get('v', [None])[0]
     except Exception: return None
+
 def descargar_audio_youtube(url):
     print(f"⚙️ Motor Principal: Descargando audio de: {url}...")
     try:
@@ -92,6 +91,7 @@ def descargar_audio_youtube(url):
     except Exception as e:
         print(f"⚠️ Falló la descarga de audio. ({e})")
         return None
+
 def obtener_transcripcion_api(video_id, idioma='es'):
     print(f"⚙️ Motor de Respaldo: Obteniendo subtítulos para: {video_id}...")
     try:
@@ -100,6 +100,7 @@ def obtener_transcripcion_api(video_id, idioma='es'):
     except Exception as e:
         print(f"⚠️ No se encontraron subtítulos. ({e})")
         return None
+
 def generar_contenido_ia(prompt, media=None):
     if not gemini_key_loaded: raise ValueError("La API Key de Gemini no está configurada en el servidor.")
     try:
@@ -176,3 +177,4 @@ def handle_video_generation():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+
