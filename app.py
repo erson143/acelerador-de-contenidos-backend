@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v3.1 - CORS Reforzado
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v3.2 - Solución Preflight
 # -----------------------------------------------------------------------------
 
 from flask import Flask, request, jsonify
@@ -12,22 +12,18 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
 from werkzeug.utils import secure_filename
 
-# --- CONFIGURACIÓN DE LA APLICACIÓN FLASK ---
 app = Flask(__name__)
 
 # CONFIGURACIÓN DE CORS REFORZADA:
-# Le decimos explícitamente que acepte peticiones desde tu dominio.
 CORS(app, resources={
   r"/process_video": {"origins": "https://ia.forteza11.com"},
   r"/process_audio": {"origins": "https://ia.forteza11.com"}
 })
 
-# --- CONFIGURACIÓN DE LA API KEY (SEGURA) ---
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
     print("ERROR CRÍTICO: La variable de entorno GEMINI_API_KEY no fue encontrada.", file=sys.stderr)
 
-# --- PROMPTS MAESTROS (Sin cambios) ---
 PROMPT_PARA_AUDIO = """
 Actúa como un experto estratega de marketing de contenidos de Forteza11. Tu primera tarea es transcribir el audio proporcionado con máxima precisión. Una vez transcrito, analiza el texto y transfórmalo en las siguientes piezas de contenido:
 1.  **Transcripción Completa:** El texto completo del audio.
@@ -52,7 +48,6 @@ Aquí está la transcripción:
 ---
 """
 
-# --- FUNCIONES LÓGICAS DEL BACKEND (Sin cambios) ---
 def obtener_id_video(url):
     try:
         if 'youtu.be' in url: return url.split('/')[-1].split('?')[0]
@@ -64,18 +59,13 @@ def obtener_id_video(url):
 def descargar_audio_youtube(url):
     print(f"⚙️ Motor Principal: Intentando descargar audio de: {url}...")
     try:
-        opciones = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-            'outtmpl': '/tmp/audio_descargado.%(ext)s', 'quiet': True, 'ignoreerrors': True, 'no_warnings': True,
-        }
+        opciones = {'format': 'bestaudio/best', 'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}], 'outtmpl': '/tmp/audio_descargado.%(ext)s', 'quiet': True, 'ignoreerrors': True, 'no_warnings': True}
         with yt_dlp.YoutubeDL(opciones) as ydl: ydl.download([url])
         ruta_audio = "/tmp/audio_descargado.mp3"
         if os.path.exists(ruta_audio):
             print(f"✅ Motor Principal: Audio descargado exitosamente.")
             return ruta_audio
-        else:
-            raise FileNotFoundError("El archivo de audio no se creó.")
+        else: raise FileNotFoundError("El archivo de audio no se creó.")
     except Exception as e:
         print(f"⚠️ Motor Principal: Falló la descarga de audio. ({e})")
         return None
@@ -92,8 +82,7 @@ def obtener_transcripcion_api(video_id, idioma='es'):
         return None
 
 def generar_contenido_ia(prompt, media=None):
-    if not GEMINI_API_KEY:
-        raise ValueError("La API Key de Gemini no está configurada en el servidor.")
+    if not GEMINI_API_KEY: raise ValueError("La API Key de Gemini no está configurada en el servidor.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         print("🤖 Enviando información a la IA de Gemini para su análisis...")
@@ -104,8 +93,7 @@ def generar_contenido_ia(prompt, media=None):
                 print("🤖 Subiendo archivo de audio a la API de Gemini...")
                 audio_file = genai.upload_file(path=media)
                 args.append(audio_file)
-            else: 
-                args[0] = prompt.format(transcript_text=media)
+            else: args[0] = prompt.format(transcript_text=media)
         response = model.generate_content(args)
         print("🎉 ¡Contenido generado exitosamente!")
         return response.text
@@ -117,21 +105,19 @@ def generar_contenido_ia(prompt, media=None):
             os.remove(media)
             print(f"🗑️ Archivo temporal '{media}' eliminado.")
 
-# --- ENDPOINTS DE LA API (Sin cambios en la lógica interna) ---
-@app.route('/process_video', methods=['POST'])
+# --- ENDPOINTS DE LA API ---
+@app.route('/process_video', methods=['POST', 'OPTIONS']) # <-- CAMBIO CLAVE AQUÍ
 def handle_video_generation():
+    if request.method == 'OPTIONS': return '', 204
     data = request.json
     youtube_url = data.get('video_url')
-    if not youtube_url:
-        return jsonify({"error": "Falta la URL del video."}), 400
+    if not youtube_url: return jsonify({"error": "Falta la URL del video."}), 400
     video_id = obtener_id_video(youtube_url)
-    if not video_id:
-        return jsonify({"error": "La URL del video no es válida."}), 400
+    if not video_id: return jsonify({"error": "La URL del video no es válida."}), 400
     contenido_generado = None
     ruta_audio = descargar_audio_youtube(youtube_url)
     if ruta_audio:
-        try:
-            contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=ruta_audio)
+        try: contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=ruta_audio)
         except Exception as e:
             print(f"Error en el motor principal con Gemini: {e}")
             contenido_generado = None
@@ -139,22 +125,17 @@ def handle_video_generation():
         print("\n🔄 Conmutando al motor de respaldo...")
         texto_transcripcion = obtener_transcripcion_api(video_id)
         if texto_transcripcion:
-            try:
-                contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
-            except Exception as e:
-                return jsonify({"error": f"Error contactando a Gemini con el motor de respaldo: {e}"}), 500
-    if contenido_generado:
-        return jsonify({"contenido_generado": contenido_generado})
-    else:
-        return jsonify({"error": "Fallo Crítico: No se pudo procesar el video. Puede que sea privado, no tenga audio o subtítulos disponibles."}), 500
+            try: contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
+            except Exception as e: return jsonify({"error": f"Error contactando a Gemini con el motor de respaldo: {e}"}), 500
+    if contenido_generado: return jsonify({"contenido_generado": contenido_generado})
+    else: return jsonify({"error": "Fallo Crítico: No se pudo procesar el video. Puede que sea privado, no tenga audio o subtítulos disponibles."}), 500
 
-@app.route('/process_audio', methods=['POST'])
+@app.route('/process_audio', methods=['POST', 'OPTIONS']) # <-- CAMBIO CLAVE AQUÍ
 def handle_audio_generation():
-    if 'audio_file' not in request.files:
-        return jsonify({"error": "No se encontró el archivo de audio en la solicitud."}), 400
+    if request.method == 'OPTIONS': return '', 204
+    if 'audio_file' not in request.files: return jsonify({"error": "No se encontró el archivo de audio en la solicitud."}), 400
     file = request.files['audio_file']
-    if file.filename == '':
-        return jsonify({"error": "No se seleccionó ningún archivo."}), 400
+    if file.filename == '': return jsonify({"error": "No se seleccionó ningún archivo."}), 400
     if file:
         filename = secure_filename(file.filename)
         filepath = os.path.join('/tmp', filename)
@@ -162,13 +143,9 @@ def handle_audio_generation():
         print(f"⚙️ Archivo de audio '{filename}' recibido y guardado temporalmente.")
         try:
             contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=filepath)
-            if contenido_generado:
-                return jsonify({"contenido_generado": contenido_generado})
-            else:
-                return jsonify({"error": "La IA no pudo generar contenido a partir del audio."}), 500
-        except Exception as e:
-            return jsonify({"error": f"Ocurrió un error al procesar el archivo con la IA: {e}"}), 500
+            if contenido_generado: return jsonify({"contenido_generado": contenido_generado})
+            else: return jsonify({"error": "La IA no pudo generar contenido a partir del audio."}), 500
+        except Exception as e: return jsonify({"error": f"Ocurrió un error al procesar el archivo con la IA: {e}"}), 500
 
-# --- FUNCIÓN DE INICIO (Sin cambios) ---
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
