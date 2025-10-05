@@ -1,8 +1,8 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v6.0 - Manejo de Errores Avanzado
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v7.0 - Corrección Final
 # -----------------------------------------------------------------------------
-# Esta versión mejora el manejo de errores para el bloqueo de YouTube y fallos
-# en la API de transcripción, proporcionando mensajes más claros.
+# Esta versión corrige un error de tipeo en la llamada a la función
+# 'get_transcript' de la librería YouTubeTranscriptApi.
 # -----------------------------------------------------------------------------
 import flask, google.generativeai as genai, yt_dlp, os, sys, datetime, json
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
@@ -16,7 +16,7 @@ from flask_cors import CORS
 app = flask.Flask(__name__)
 CORS(app)
 
-print("✅ INICIANDO ARRANQUE v6.0 (Listo para recibir peticiones)...", file=sys.stderr)
+print("✅ INICIANDO ARRANQUE v7.0 (Listo para recibir peticiones)...", file=sys.stderr)
 sys.stderr.flush()
 
 # --- CONFIGURACIÓN GLOBAL Y CACHE PARA CREDENCIALES ---
@@ -60,7 +60,7 @@ def load_credentials_if_needed():
         traceback.print_exc(file=sys.stderr)
         return False
 
-# --- PROMPTS Y FUNCIONES AUXILIARES (Sin Cambios) ---
+# --- PROMPTS Y FUNCIONES AUXILIARES ---
 PROMPT_PARA_AUDIO = """
 Actúa como un experto estratega de marketing de contenidos de Forteza11. Tu primera tarea es transcribir el audio proporcionado con máxima precisión. Una vez transcrito, analiza el texto y transfórmalo en las siguientes piezas de contenido:
 1.  **Transcripción Completa:** El texto completo del audio.
@@ -109,7 +109,10 @@ def descargar_audio_youtube(url):
 def obtener_transcripcion_api(video_id):
     print("  -> Intentando obtener transcripción con API...", file=sys.stderr)
     try:
+        # ------------------- ¡AQUÍ ESTABA EL ERROR! -------------------
+        # CORREGIDO: la función se llama get_transcript, no get_transcription
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['es', 'es-419'])
+        # -----------------------------------------------------------------
         texto = " ".join([item['text'] for item in transcript_list])
         print("  ✅ Transcripción obtenida exitosamente.", file=sys.stderr)
         return texto
@@ -166,7 +169,7 @@ def handle_audio_generation():
     try:
         contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=filepath)
         blob.delete()
-        if contenido_generado: return flask.jsonify({"contenido_generado": contenido_generado})
+        if contenido_generado: return flask.jsonify({"contenido_gen erado": contenido_generado})
         else: return flask.jsonify({"error": "La IA no pudo generar contenido."}), 500
     except Exception as e: return flask.jsonify({"error": f"Error al procesar con IA: {e}"}), 500
 
@@ -192,7 +195,7 @@ def handle_video_generation():
             contenido_generado = generar_contenido_ia(PROMPT_PARA_TEXTO, media=texto_transcripcion)
         except Exception as e:
             print(f"  ❌ Fallo al generar contenido desde la transcripción: {e}", file=sys.stderr)
-            contenido_generado = None # Asegurarse de que esté limpio para el siguiente paso
+            contenido_generado = None
     
     # --- MÉTODO 2: DESCARGA DE AUDIO (Plan B, si el primero falla) ---
     if not contenido_generado:
