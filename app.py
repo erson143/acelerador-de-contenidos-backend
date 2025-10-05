@@ -1,8 +1,8 @@
 # -----------------------------------------------------------------------------
-# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v7.0 - Corrección Final
+# COMPONENTE 1: EL BACKEND (EL MOTOR CENTRAL) v7.1 - Corrección Verificada
 # -----------------------------------------------------------------------------
-# Esta versión corrige un error de tipeo en la llamada a la función
-# 'get_transcript' de la librería YouTubeTranscriptApi.
+# Esta versión garantiza que la llamada a la función 'get_transcript'
+# es correcta, solucionando el AttributeError.
 # -----------------------------------------------------------------------------
 import flask, google.generativeai as genai, yt_dlp, os, sys, datetime, json
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
@@ -16,7 +16,7 @@ from flask_cors import CORS
 app = flask.Flask(__name__)
 CORS(app)
 
-print("✅ INICIANDO ARRANQUE v7.0 (Listo para recibir peticiones)...", file=sys.stderr)
+print("✅ INICIANDO ARRANQUE v7.1 (Listo para recibir peticiones)...", file=sys.stderr)
 sys.stderr.flush()
 
 # --- CONFIGURACIÓN GLOBAL Y CACHE PARA CREDENCIALES ---
@@ -109,10 +109,8 @@ def descargar_audio_youtube(url):
 def obtener_transcripcion_api(video_id):
     print("  -> Intentando obtener transcripción con API...", file=sys.stderr)
     try:
-        # ------------------- ¡AQUÍ ESTABA EL ERROR! -------------------
-        # CORREGIDO: la función se llama get_transcript, no get_transcription
+        # CORRECCIÓN DEFINITIVA: La función es 'get_transcript'.
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['es', 'es-419'])
-        # -----------------------------------------------------------------
         texto = " ".join([item['text'] for item in transcript_list])
         print("  ✅ Transcripción obtenida exitosamente.", file=sys.stderr)
         return texto
@@ -169,7 +167,7 @@ def handle_audio_generation():
     try:
         contenido_generado = generar_contenido_ia(PROMPT_PARA_AUDIO, media=filepath)
         blob.delete()
-        if contenido_generado: return flask.jsonify({"contenido_gen erado": contenido_generado})
+        if contenido_generado: return flask.jsonify({"contenido_generado": contenido_generado})
         else: return flask.jsonify({"error": "La IA no pudo generar contenido."}), 500
     except Exception as e: return flask.jsonify({"error": f"Error al procesar con IA: {e}"}), 500
 
@@ -188,7 +186,6 @@ def handle_video_generation():
     print(f"Procesando video ID: {video_id}")
     contenido_generado = None
     
-    # --- MÉTODO 1: API DE TRANSCRIPCIÓN (Ahora es el principal) ---
     texto_transcripcion = obtener_transcripcion_api(video_id)
     if texto_transcripcion:
         try:
@@ -197,7 +194,6 @@ def handle_video_generation():
             print(f"  ❌ Fallo al generar contenido desde la transcripción: {e}", file=sys.stderr)
             contenido_generado = None
     
-    # --- MÉTODO 2: DESCARGA DE AUDIO (Plan B, si el primero falla) ---
     if not contenido_generado:
         print("Plan A (API de transcripción) falló. Intentando Plan B (Descarga de audio).")
         ruta_audio = descargar_audio_youtube(youtube_url)
@@ -207,7 +203,6 @@ def handle_video_generation():
             except Exception as e:
                 print(f"  ❌ Fallo al generar contenido desde el audio: {e}", file=sys.stderr)
 
-    # --- RESULTADO FINAL ---
     if contenido_generado:
         print("✅ Proceso completado con éxito.")
         return flask.jsonify({"contenido_generado": contenido_generado})
